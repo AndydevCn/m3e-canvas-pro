@@ -367,4 +367,3 @@ MIT © lnkiai
 - 本仓库刻意**不含**以下已被处理的纯 bug 修复：`cssRules` 跨域字体 SecurityError、
   剪贴板写入降级、Toolbar 点击穿透（pointer-events）、原生 `prompt()` / `confirm()`
   在 iframe 预览中的兼容性——这些属于缺陷修复，不计入功能变更。
-- 持久化 / OPFS / 多项目 / 缩略图尚未在真实浏览器中做端到端验收，建议在浏览器手动确认。
