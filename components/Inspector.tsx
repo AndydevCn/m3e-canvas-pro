@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { copyText } from "@/lib/clipboard";
 import {
   Action,
   BACK_TARGET,
@@ -492,10 +493,7 @@ export function FrameInspector({
             copied ? "check" : "content_copy",
             copied ? t("copied", lang) : t("prompt", lang),
             async () => {
-              try {
-                await navigator.clipboard.writeText(prompt);
-                setCopied(true);
-              } catch {}
+              if (await copyText(prompt)) setCopied(true);
             },
           )}
           {actionBtn(

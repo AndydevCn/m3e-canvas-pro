@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Doc, Palette } from "@/lib/tokens";
 import { shareLink } from "@/lib/share";
+import { copyText } from "@/lib/clipboard";
 import { Icon } from "./M3Node";
 import { t, useLang } from "@/lib/i18n";
 
@@ -101,16 +102,10 @@ export function ShareDialog({
 
   const copyAsk = async () => {
     const text = t("askAiText", lang).replace("{url}", guideUrl()).replace("{idea}", idea.trim() || t("askAiIdeaFallback", lang));
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied("ask");
-    } catch {}
+    if (await copyText(text)) setCopied("ask");
   };
   const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(await shareLink(doc, appUrl()));
-      setCopied("link");
-    } catch {}
+    if (await copyText(await shareLink(doc, appUrl()))) setCopied("link");
   };
 
   /* a connected pair, the way the canvas draws connected buttons: outer corners round, inner ones tight */

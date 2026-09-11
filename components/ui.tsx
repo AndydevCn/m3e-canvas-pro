@@ -1115,7 +1115,147 @@ export function ConfirmDialog({
               <Icon name={icon} size={28} />
             </div>
             <div style={{ fontSize: 22, textAlign: "center" }}>{title}</div>
-            <div style={{ fontSize: 14, lineHeight: 1.5, color: p.onSurfaceVariant }}>{body}</div>
+            <div style={{ fontSize: 14, lineHeight: 1.5, color: p.onSurfaceVariant, whiteSpace: "pre-line" }}>{body}</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              {btn(t("cancel", lang), false, onCancel)}
+              {btn(t("ok", lang), true, onConfirm)}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+export function RenameDialog({
+  open,
+  title,
+  placeholder,
+  value,
+  onChange,
+  onCancel,
+  onConfirm,
+  p,
+}: {
+  open: boolean;
+  title: string;
+  placeholder?: string;
+  value: string;
+  onChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  p: Palette;
+}) {
+  const lang = useLang();
+  const inputRef = useRef<HTMLInputElement>(null);
+  /* keep the latest onCancel without making it an effect dependency, otherwise the
+     focus/select effect would re-run on every keystroke (onCancel is a fresh closure
+     each render) and re-select the text, causing typed letters to overwrite each other */
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCancelRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    /* focus + select the current name a tick after the dialog mounts (runs once per open) */
+    const id = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 30);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.clearTimeout(id);
+    };
+  }, [open]);
+  const btn = (label: string, primary: boolean, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      className="m3-press"
+      style={{
+        height: 40,
+        padding: "0 16px",
+        borderRadius: 20,
+        border: "none",
+        background: primary ? p.primary : "transparent",
+        color: primary ? p.onPrimary : p.primary,
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key="rename-scrim"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16 }}
+          onClick={onCancel}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 600,
+            background: "rgba(0,0,0,0.32)",
+            display: "grid",
+            placeItems: "center",
+            padding: 24,
+          }}
+        >
+          <motion.div
+            role="dialog"
+            aria-modal
+            aria-label={title}
+            initial={{ scale: 0.92, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.96, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 520, damping: 34, mass: 0.7 }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(100%, 340px)",
+              padding: 24,
+              borderRadius: 28,
+              background: p.surfaceContainerHigh,
+              color: p.onSurface,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.10)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            <div style={{ fontSize: 22, textAlign: "center" }}>{title}</div>
+            <input
+              ref={inputRef}
+              value={value}
+              placeholder={placeholder}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.stopPropagation();
+                  onConfirm();
+                }
+              }}
+              style={{
+                height: 48,
+                padding: "0 14px",
+                borderRadius: 14,
+                border: `1px solid ${p.outline}`,
+                outline: "none",
+                background: p.surface,
+                color: p.onSurface,
+                font: "inherit",
+                fontSize: 16,
+              }}
+            />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               {btn(t("cancel", lang), false, onCancel)}
               {btn(t("ok", lang), true, onConfirm)}

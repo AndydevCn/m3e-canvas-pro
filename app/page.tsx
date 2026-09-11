@@ -9,8 +9,10 @@ import {
   useState,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion, useSpring } from "motion/react";
-import { toPng } from "html-to-image";
+import { toCanvas, toPng } from "html-to-image";
 import { buildPrompt, effectivePrompt } from "@/lib/prompt";
+import { copyText } from "@/lib/clipboard";
+import { captureWithoutForeignFonts } from "@/lib/capture";
 import {
   Action,
   actionsOf,
@@ -93,6 +95,10 @@ import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBeh
 import { barSlotOf, bodyRect, carryFrame, pullInto, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
 import { isProject, readProject, saveProject } from "@/lib/project";
+import { PersistStore, fileAccessSupported, type ProjectSnapshot, type SaveStatus } from "@/lib/persist";
+import { announceRelease, askForHandover, listenForHandover } from "@/lib/persist/lock";
+import { DOC_KEY } from "@/lib/persist/local";
+import { IDLE_STATUS } from "@/lib/persist/types";
 import { hasShareHash, readShareHash } from "@/lib/share";
 import { LoadingIndicator } from "@/components/Loading";
 import { draftDesign } from "@/lib/ai";
@@ -101,7 +107,7 @@ import { ColorPanel } from "@/components/ColorPanel";
 import { MotionPanel, ShapePanel, TypePanel } from "@/components/ThemePanel";
 import { ThemeContext, ensureFontLoaded, ensureLangFontLoaded } from "@/lib/theme";
 import { BottomSheet, MobileActionBar, MobileInspector, MobileLang, MobileSettings } from "@/components/Mobile";
-import { ConfirmDialog, IconBtn, Segmented } from "@/components/ui";
+import { ConfirmDialog, IconBtn, RenameDialog, Segmented } from "@/components/ui";
 import { Lang, LangContext, SEED_TEXT, getLang, isLang, setGlobalLang, t, translateDefaultFrameName, translateDefaultText } from "@/lib/i18n";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
@@ -129,10 +135,11 @@ const RAIL_W = 52;
 const MIN_Z = 0.25;
 const MAX_Z = 3;
 const HISTORY_MAX = 100;
-const DOC_KEY = "m3e:doc";
 /** the design a draft or a link replaced, until the author keeps or undoes it */
 const BEFORE_KEY = "m3e:doc:before";
 const DOC_LOCK = "m3e:doc:editor";
+/** width of the picture a project shows in the switcher */
+const THUMB_WIDTH = 160;
 const UI_KEY = "m3e:ui";
 
 type View = { x: number; y: number; z: number };
@@ -335,6 +342,17 @@ const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "colo
 
 export default function Page() {
   /* ---------- document ---------- */
+  /* where the canvas is kept: a design.json the author picked, else the browser */
+  const persistRef = useRef<PersistStore | null>(null);
+  if (!persistRef.current) persistRef.current = new PersistStore();
+  const persist = persistRef.current;
+  /** the editor owns the canvas the project thumbnail is taken of; the store calls it */
+  const captureThumbRef = useRef<() => Promise<string | null>>(async () => null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>(IDLE_STATUS);
+  /* every design kept on disk, and the one being edited */
+  const [projects, setProjects] = useState<ProjectSnapshot>({ id: null, name: "", projects: [] });
+  /* decided after mount: reading the browser during render would not match the prerendered HTML */
+  const [canLinkFile, setCanLinkFile] = useState(false);
   const [editAccess, setEditAccess] = useState<"checking" | "editable" | "readonly">("checking");
   const [groups, setGroupState] = useState<Group[]>(seed);
   /* Enforce the standalone-modal rule for imports, grouping, undo and all edits. */
@@ -370,6 +388,13 @@ export default function Page() {
   const [isMobile, setIsMobile] = useState(false);
   const [sheet, setSheet] = useState<"edit" | "settings" | "lang" | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  /** in-app rename dialog (replaces window.prompt, which is blocked in the iframe preview) */
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  /** in-app delete confirmation (replaces window.confirm, which is blocked in the iframe preview) */
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteName, setDeleteName] = useState("");
   /** frame being rendered offscreen for the PNG export */
   const [exportFrame, setExportFrame] = useState<Frame | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -568,6 +593,7 @@ export default function Page() {
     }
     let active = true;
     let releaseLock: (() => void) | undefined;
+    let stopListening: (() => void) | undefined;
     /* Wait until React has finished its development-only effect replay. This
        prevents the discarded setup from briefly competing with the real one. */
     queueMicrotask(() => {
@@ -580,9 +606,18 @@ export default function Page() {
             return;
           }
           setEditAccess("editable");
+          /* A later tab can ask for the editor instead of the author having to
+             find this one and close it: let go of the lock, then say so. */
+          stopListening = listenForHandover(() => {
+            stopListening?.();
+            releaseLock?.();
+            announceRelease();
+            setEditAccess("readonly");
+          });
           await new Promise<void>((resolve) => {
             releaseLock = resolve;
           });
+          stopListening?.();
         })
         .catch(() => {
           if (active) setEditAccess("editable");
@@ -590,6 +625,7 @@ export default function Page() {
     });
     return () => {
       active = false;
+      stopListening?.();
       releaseLock?.();
     };
   }, []);
@@ -630,6 +666,9 @@ export default function Page() {
     if (isPlatform(doc.platform)) setPlatform(doc.platform);
     else if (reset) setPlatform(null);
   };
+  /** kept for the persistence layer, which may hand back a document after mount */
+  const applyDocRef = useRef(applyDoc);
+  applyDocRef.current = applyDoc;
 
   useEffect(() => {
     // React's development double-run would otherwise read back its own first save
@@ -679,6 +718,39 @@ export default function Page() {
     setAiSettings(loadAiSettings());
     loadedRef.current = true;
   }, []);
+
+  /* Where the canvas is kept. A linked design.json wins over the browser copy:
+     it is the file the author chose, and the browser copy is only a fallback. */
+  useEffect(() => {
+    setCanLinkFile(fileAccessSupported());
+    const unsubscribe = persist.subscribe(setSaveStatus);
+    const unsubscribeProjects = persist.subscribeProjects(setProjects);
+    /* the thumbnail is taken from the canvas, which only the editor can reach */
+    persist.setThumbProvider(() => captureThumbRef.current());
+    /* the effect above has read the stored language already; projects made
+       before the first edit are named in it */
+    persist.setLang(initialLangRef.current);
+    const detach = persist.attach();
+    void persist.init().then((fileDoc) => {
+      if (!fileDoc) return;
+      hadDocRef.current = true;
+      applyDocRef.current(fileDoc, false);
+    });
+    return () => {
+      unsubscribe();
+      unsubscribeProjects();
+      persist.setThumbProvider(null);
+      detach();
+    };
+  }, [persist]);
+
+  /* a canvas that could not be written is worth one warning before it is gone */
+  useEffect(() => {
+    if (saveStatus.phase !== "error") return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [saveStatus.phase]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -759,14 +831,24 @@ export default function Page() {
     return () => mq.removeEventListener("change", apply);
   }, []);
 
+  /* Every edit goes to the persistence layer, which writes it to the author's
+     design.json when one is linked and to the browser otherwise. A failed write
+     used to be swallowed here; it is reported now. */
   useEffect(() => {
     if (!loadedRef.current || editAccess !== "editable") return;
-    try {
-      localStorage.setItem(
-        DOC_KEY,
-        JSON.stringify({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme }),
-      );
-    } catch {}
+    persist.save({
+      groups,
+      frames,
+      paletteKey,
+      frame,
+      title,
+      brief,
+      promptEdit,
+      platform: platform ?? undefined,
+      customPalette: customPalette ?? undefined,
+      dynamicColor,
+      theme,
+    });
   }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme]);
 
   useEffect(() => {
@@ -2441,6 +2523,113 @@ export default function Page() {
     toastTimer.current = window.setTimeout(() => setToast(null), ms);
   };
 
+  /* Show the toast ref so the effect below does not depend on a function that is
+     rebuilt every render; one message per failure, not one per keystroke. */
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+  const lastSaveErrorRef = useRef("");
+
+  /* A save that fails used to fail in silence. Say it, so the author can export
+     by hand instead of losing the canvas on the next reload. */
+  useEffect(() => {
+    if (saveStatus.phase !== "error") {
+      lastSaveErrorRef.current = "";
+      return;
+    }
+    const id = `${saveStatus.error ?? "write"}:${lang}`;
+    if (lastSaveErrorRef.current === id) return;
+    lastSaveErrorRef.current = id;
+    const key =
+      saveStatus.error === "quota" ? "saveQuota" : saveStatus.error === "permission" ? "savePermission" : "saveFailed";
+    showToastRef.current(t(key, lang), 4200, "error");
+  }, [saveStatus.phase, saveStatus.error, lang]);
+
+  /** pick the folder that will hold design.json, then keep saving there */
+  const linkFile = useCallback(async () => {
+    const ok = await persist.linkFolder();
+    showToastRef.current(ok ? t("saveLinked", lang) : t("saveLinkFailed", lang), 2800, ok ? "check" : "error");
+  }, [persist, lang]);
+
+  /** let the browser hand the file back after it dropped the permission */
+  const restoreAutosave = useCallback(async () => {
+    const ok = await persist.requestGrant();
+    showToastRef.current(ok ? t("saveLinked", lang) : t("saveLinkFailed", lang), 2800, ok ? "check" : "error");
+  }, [persist, lang]);
+
+  /* ---------- several designs, kept side by side ---------- */
+
+  /** an empty canvas with one screen, the way a new project starts */
+  const blankDoc = useCallback(
+    (): Partial<Doc> => ({
+      groups: [],
+      frames: [{ id: uid(), name: t("home", lang), x: 0, y: 0 }],
+      title: "",
+      brief: "",
+    }),
+    [lang],
+  );
+
+  /** switch to another design; the store writes the one being left first */
+  const openProjectById = useCallback(
+    async (id: string) => {
+      const doc = await persist.openProject(id);
+      applyDocRef.current(doc ?? blankDoc(), true);
+      showToastRef.current(persist.getProjects().name, 2000, "check");
+    },
+    [persist, blankDoc],
+  );
+
+  const createProject = useCallback(async () => {
+    await persist.flush();
+    await persist.createProject(t("untitled", lang));
+    applyDocRef.current(blankDoc(), true);
+  }, [persist, blankDoc, lang]);
+
+  const openRename = useCallback(() => {
+    setRenameValue(persist.getProjects().name);
+    setRenameOpen(true);
+  }, [persist]);
+
+  const confirmRename = useCallback(async () => {
+    const name = renameValue.trim();
+    const current = persist.getProjects().name;
+    setRenameOpen(false);
+    if (!name || name === current) return;
+    await persist.renameProject(name);
+  }, [persist, renameValue]);
+
+  const openDelete = useCallback((id: string) => {
+    const target = persist.getProjects().projects.find((p) => p.id === id);
+    setDeleteId(id);
+    setDeleteName(target?.name ?? "");
+    setDeleteOpen(true);
+  }, [persist]);
+
+  const confirmDelete = useCallback(async () => {
+    const id = deleteId;
+    setDeleteOpen(false);
+    if (!id) return;
+    const before = persist.getProjects();
+    await persist.deleteProject(id);
+    if (id !== before.id) return;
+    /* the design being edited is gone: open another one, or start a new one */
+    const rest = persist.getProjects().projects;
+    if (rest.length > 0) {
+      const doc = await persist.openProject(rest[0].id);
+      applyDocRef.current(doc ?? blankDoc(), true);
+    } else {
+      await persist.createProject(t("untitled", lang));
+      applyDocRef.current(blankDoc(), true);
+    }
+  }, [persist, deleteId, blankDoc, lang]);
+
+  /** ask the tab that holds the editor to hand it over, instead of closing it by hand */
+  const takeOverEditing = useCallback(async () => {
+    const handed = await askForHandover();
+    setEditAccess("editable");
+    showToastRef.current(t(handed ? "takeOverDone" : "takeOverForced", lang), 3600, handed ? "check" : "error");
+  }, [lang]);
+
   const updateAiSettings = (s: AiSettings) => {
     setAiSettings(s);
     saveAiSettings(s);
@@ -2597,7 +2786,9 @@ export default function Page() {
       const el = document.querySelector<HTMLElement>(`[data-export="${f.id}"]`);
       if (!el) return;
       const { w, h } = frameSizeOf(f);
-      const url = await toPng(el, { pixelRatio: 2, cacheBust: true, width: w, height: h });
+      const url = await captureWithoutForeignFonts(() =>
+        toPng(el, { pixelRatio: 2, cacheBust: true, width: w, height: h }),
+      );
       const a = document.createElement("a");
       a.href = url;
       a.download = `${f.name || "screen"}.png`;
@@ -2606,6 +2797,31 @@ export default function Page() {
       setExportFrame(null);
     }
   };
+
+  /** A small webp of the first screen, kept with the project so the switcher can
+   *  show designs instead of only their names. Cheap enough to repeat now and then,
+   *  and a failure costs nothing but the picture. */
+  const captureThumb = useCallback(async (): Promise<string | null> => {
+    const f = framesRef.current[0];
+    if (!f) return null;
+    try {
+      setExportFrame(f);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+      await document.fonts?.ready;
+      const el = document.querySelector<HTMLElement>(`[data-export="${f.id}"]`);
+      if (!el) return null;
+      const { w, h } = frameSizeOf(f);
+      const canvas = await captureWithoutForeignFonts(() =>
+        toCanvas(el, { pixelRatio: THUMB_WIDTH / w, width: w, height: h, cacheBust: true }),
+      );
+      return canvas.toDataURL("image/webp", 0.8);
+    } catch {
+      return null;
+    } finally {
+      setExportFrame(null);
+    }
+  }, []);
+  captureThumbRef.current = captureThumb;
 
   /** the runs of one screen drawn with plain divs: the export layer */
   const renderExport = (f: Frame) => {
@@ -2767,7 +2983,7 @@ export default function Page() {
           t.isContentEditable);
       if (typing) return;
       // dialogs and the preview own the keyboard while they are up
-      if (confirmClear || pendingImport !== null || shareOpen || previewId !== null) return;
+      if (confirmClear || renameOpen || deleteOpen || pendingImport !== null || shareOpen || previewId !== null) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -3846,6 +4062,15 @@ export default function Page() {
             note={aiNote}
             onSaveProject={() => saveProject(doc)}
             onOpenProject={() => projectFileRef.current?.click()}
+            saveStatus={saveStatus}
+            onLinkFile={canLinkFile ? linkFile : undefined}
+            onRestoreAutosave={canLinkFile ? restoreAutosave : undefined}
+            project={projects}
+            onOpenProjectById={openProjectById}
+            onCreateProject={createProject}
+            onRenameProject={openRename}
+            onDeleteProject={openDelete}
+            getThumb={persist.getThumb}
             onShare={!isMobile ? () => setShareOpen(true) : undefined}
             shareState={draftBusy ? "busy" : draftBefore ? "review" : "idle"}
             onDraftKeep={keepDraft}
@@ -3857,10 +4082,8 @@ export default function Page() {
             onSettings={() => setSheet(sheet === "settings" ? null : "settings")}
             onLangSheet={() => setSheet(sheet === "lang" ? null : "lang")}
             onPrompt={async () => {
-              try {
-                await navigator.clipboard.writeText(effectivePrompt(doc, widths, lang));
-                showToast(t("copied", lang), 1400, "check");
-              } catch {}
+              const ok = await copyText(effectivePrompt(doc, widths, lang));
+              showToast(t(ok ? "copied" : "copyFailed", lang), 1400, ok ? "check" : "error");
             }}
           />
 
@@ -4146,6 +4369,26 @@ export default function Page() {
           onCancel={() => setConfirmClear(false)}
           onConfirm={clearAll}
         />
+
+        <RenameDialog
+          open={renameOpen}
+          title={t("renameProject", lang)}
+          placeholder={t("projectName", lang)}
+          value={renameValue}
+          onChange={setRenameValue}
+          onCancel={() => setRenameOpen(false)}
+          onConfirm={confirmRename}
+          p={p}
+        />
+
+        <ConfirmDialog
+          open={deleteOpen}
+          title={t("deleteProjectAsk", lang)}
+          body={[deleteName, t("deleteProjectBody", lang)].filter(Boolean).join("\n")}
+          p={p}
+          onCancel={() => setDeleteOpen(false)}
+          onConfirm={confirmDelete}
+        />
       </div>
 
       <AnimatePresence>
@@ -4193,11 +4436,28 @@ export default function Page() {
               <p style={{ margin: 0, color: p.onSurfaceVariant, fontSize: 14, lineHeight: 1.5 }}>
                 {t("readOnlyBody", lang)}
               </p>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 24 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 24 }}>
+                <button
+                  className="m3-press"
+                  onClick={() => window.location.reload()}
+                  style={{
+                    minHeight: 40,
+                    padding: "0 16px",
+                    border: "none",
+                    borderRadius: 20,
+                    background: "transparent",
+                    color: p.primary,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {t("reload", lang)}
+                </button>
                 <button
                   autoFocus
                   className="m3-press"
-                  onClick={() => window.location.reload()}
+                  onClick={() => void takeOverEditing()}
                   style={{
                     minHeight: 40,
                     padding: "0 20px",
@@ -4210,7 +4470,7 @@ export default function Page() {
                     cursor: "pointer",
                   }}
                 >
-                  {t("reload", lang)}
+                  {t("takeOver", lang)}
                 </button>
               </div>
             </div>

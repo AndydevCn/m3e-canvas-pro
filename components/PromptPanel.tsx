@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { buildPrompt } from "@/lib/prompt";
+import { copyText } from "@/lib/clipboard";
 import { Doc, Palette, Platform, defaultPlatformOf } from "@/lib/tokens";
 import { Icon } from "./M3Node";
 import { Field, IconBtn, Segmented } from "./ui";
@@ -31,10 +32,7 @@ export function PromptPanel({
   }, [copied]);
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {}
+    if (await copyText(text)) setCopied(true);
   };
 
   const projectButton = (icon: string, label: string, onClick: () => void) => (

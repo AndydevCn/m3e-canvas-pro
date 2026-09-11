@@ -1,0 +1,2 @@
+npm run dev
+http://localhost:3000，浏览器打开这个地址即可。改动代码会热更新，不用重启。

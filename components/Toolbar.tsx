@@ -7,6 +7,8 @@ import { ShareButton } from "./ShareMenu";
 import { Icon } from "./M3Node";
 import { Popover } from "./Menus";
 import { t, useLang } from "@/lib/i18n";
+import type { ProjectSnapshot, SaveStatus } from "@/lib/persist";
+import { ProjectChip } from "./ProjectMenu";
 
 export type Mode = "select" | "hand";
 
@@ -59,6 +61,99 @@ function Pill({ p, children }: { p: Palette; children: React.ReactNode }) {
   );
 }
 
+/** Where the autosave lands, and the one thing to do when it cannot land at all.
+ *  A canvas that silently stops saving is worse than a noisy chip, so the failure
+ *  is shown here as clearly as the success. */
+function SaveChip({
+  p,
+  status,
+  onLinkFile,
+  onRestoreAutosave,
+}: {
+  p: Palette;
+  status: SaveStatus;
+  onLinkFile?: () => void;
+  onRestoreAutosave?: () => void;
+}) {
+  const lang = useLang();
+  const failed = status.phase === "error";
+  const needsGrant = failed && status.error === "permission";
+  const time = status.at
+    ? new Date(status.at).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-GB", { hour: "2-digit", minute: "2-digit" })
+    : "";
+  const label = failed
+    ? t(status.error === "permission" ? "savePermission" : status.error === "quota" ? "saveQuota" : "saveFailed", lang)
+    : status.phase === "pending"
+      ? t("saveSaving", lang)
+      : status.target === "file"
+        ? `${t("savedTo", lang)} ${status.name ?? "design.json"}${time ? ` · ${time}` : ""}`
+        : status.target === "disk"
+          ? `${t("saveDisk", lang)}${time ? ` · ${time}` : ""}`
+          : `${t("saveBrowser", lang)}${time ? ` · ${time}` : ""}`;
+  const action = needsGrant ? onRestoreAutosave : status.target === "file" ? undefined : onLinkFile;
+  const actionLabel = needsGrant ? t("saveRestore", lang) : t("saveLinkFile", lang);
+  const tone = failed ? p.errorContainer : p.surfaceContainerLow;
+  const ink = failed ? p.onErrorContainer : p.onSurface;
+  return (
+    <Pill p={p}>
+      <div
+        role="status"
+        aria-live="polite"
+        title={label}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          height: 40,
+          padding: "0 6px 0 12px",
+          borderRadius: 20,
+          background: tone,
+          color: ink,
+          fontSize: 13,
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+          maxWidth: 260,
+        }}
+      >
+        <Icon
+          name={
+            failed
+              ? "error"
+              : status.phase === "pending"
+                ? "sync"
+                : status.target === "file"
+                  ? "cloud_done"
+                  : status.target === "disk"
+                    ? "storage"
+                    : "devices"
+          }
+          size={18}
+        />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+        {action && (
+          <button
+            onClick={action}
+            className="m3-press"
+            style={{
+              height: 32,
+              padding: "0 12px",
+              border: "none",
+              borderRadius: 16,
+              background: p.primary,
+              color: p.onPrimary,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {actionLabel}
+          </button>
+        )}
+      </div>
+    </Pill>
+  );
+}
+
 export function Toolbar({
   p,
   mode,
@@ -86,6 +181,15 @@ export function Toolbar({
   note,
   onSaveProject,
   onOpenProject,
+  saveStatus,
+  onLinkFile,
+  onRestoreAutosave,
+  project,
+  onOpenProjectById,
+  onCreateProject,
+  onRenameProject,
+  onDeleteProject,
+  getThumb,
   onShare,
   shareState = "idle",
   onDraftKeep,
@@ -124,6 +228,20 @@ export function Toolbar({
   note?: { text: string; icon: string } | null;
   onSaveProject?: () => void;
   onOpenProject?: () => void;
+  /** where the autosave goes and what became of the last write */
+  saveStatus?: SaveStatus;
+  /** picks the folder that will hold design.json; absent where the browser has no file access */
+  onLinkFile?: () => void;
+  /** asks the browser for the file permission again, after it was dropped */
+  onRestoreAutosave?: () => void;
+  /** the design being edited and the others kept on disk */
+  project?: ProjectSnapshot;
+  onOpenProjectById?: (id: string) => void;
+  onCreateProject?: () => void;
+  onRenameProject?: () => void;
+  onDeleteProject?: (id: string) => void;
+  /** read lazily, only for the designs whose picture is on screen */
+  getThumb?: (id: string) => Promise<string | null>;
   /** opens the "ask an AI" dialog from the left end of the zoom row */
   onShare?: () => void;
   /** busy while a model drafts; review while the draft waits to be kept or undone */
@@ -432,6 +550,21 @@ export function Toolbar({
             </Popover>
           )}
         </Pill>
+
+        {project && (project.projects.length > 0 || onCreateProject) && (
+          <ProjectChip
+            p={p}
+            snapshot={project}
+            onOpen={onOpenProjectById}
+            onCreate={onCreateProject}
+            onRename={onRenameProject}
+            onDelete={onDeleteProject}
+            getThumb={getThumb}
+          />
+        )}
+        {saveStatus && (
+          <SaveChip p={p} status={saveStatus} onLinkFile={onLinkFile} onRestoreAutosave={onRestoreAutosave} />
+        )}
       </div>
     </>
   );
