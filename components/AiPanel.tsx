@@ -11,6 +11,7 @@ export function aiErrorText(e: unknown, lang: ReturnType<typeof useLang>): strin
   const m = e instanceof Error ? e.message : String(e);
   if (m === "refusal") return t("aiErrorRefusal", lang);
   if (m === "json" || m === "empty") return t("aiErrorJson", lang);
+  if (m === "long") return t("aiErrorLong", lang);
   if (m === "model") return t("aiErrorModel", lang);
   if (m === "insecure") return t("aiErrorInsecure", lang);
   if (/failed to fetch|networkerror|load failed/i.test(m)) return t("aiErrorNetwork", lang);
@@ -160,6 +161,71 @@ function ProviderGroup({ value, onChange, p }: { value: Provider; onChange: (k: 
   );
 }
 
+/** A provider with a fixed list (models or billing endpoints) gets one connected button group instead of a free-text field. */
+function ChoiceGroup({ value, choices, labels, tone = "primary", onChange, p }: { value: string; choices: string[]; labels?: string[]; tone?: "primary" | "secondary"; onChange: (v: string) => void; p: Palette }) {
+  const n = choices.length;
+  const ref = useRef<HTMLDivElement>(null);
+  const move = (from: number, delta: number) => {
+    const to = (from + delta + n) % n;
+    onChange(choices[to]);
+    (ref.current?.children[to] as HTMLElement | undefined)?.focus();
+  };
+  const onBg = tone === "primary" ? p.primaryContainer : p.secondaryContainer;
+  const onFg = tone === "primary" ? p.onPrimaryContainer : p.onSecondaryContainer;
+  return (
+    <div ref={ref} role="radiogroup" style={{ display: "flex", gap: 3 }}>
+      {choices.map((c, i) => {
+        const on = c === value;
+        const label = labels?.[i] ?? c;
+        const outer = 22;
+        const inner = 8;
+        const l = i === 0 ? outer : inner;
+        const r = i === n - 1 ? outer : inner;
+        return (
+          <button
+            key={c}
+            role="radio"
+            aria-checked={on}
+            tabIndex={on ? 0 : -1}
+            title={labels?.[i] ? `${label}：${c}` : c}
+            aria-label={label}
+            onClick={() => onChange(c)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                e.preventDefault();
+                move(i, 1);
+              } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                e.preventDefault();
+                move(i, -1);
+              }
+            }}
+            className="m3-press"
+            style={{
+              flex: 1,
+              height: 44,
+              minWidth: 0,
+              border: "none",
+              borderRadius: `${l}px ${r}px ${r}px ${l}px`,
+              background: on ? onBg : p.surfaceContainerHigh,
+              color: on ? onFg : p.onSurfaceVariant,
+              cursor: "pointer",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 12,
+              padding: "0 8px",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              transition: "background 160ms, color 160ms",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The AI tab of the left rail: the provider settings. The actions live with each screen on the right. */
 export function AiPanel({ p, settings, onSettings }: { p: Palette; settings: AiSettings; onSettings: (s: AiSettings) => void }) {
   const lang = useLang();
@@ -179,11 +245,19 @@ export function AiPanel({ p, settings, onSettings }: { p: Palette; settings: AiS
           </div>
           <div>
             <Label p={p}>{t("aiModel", lang)}</Label>
-            <Input label={t("aiModel", lang)} value={settings.model} onChange={(model) => onSettings({ ...settings, model })} placeholder={spec.model || "model"} p={p} />
+            {spec.models?.length ? (
+              <ChoiceGroup value={settings.model} choices={spec.models} onChange={(model) => onSettings({ ...settings, model })} p={p} />
+            ) : (
+              <Input label={t("aiModel", lang)} value={settings.model} onChange={(model) => onSettings({ ...settings, model })} placeholder={spec.model || "model"} p={p} />
+            )}
           </div>
           <div>
             <Label p={p}>{t("aiBaseUrl", lang)}</Label>
-            <Input label={t("aiBaseUrl", lang)} value={settings.baseUrl} onChange={(baseUrl) => onSettings({ ...settings, baseUrl })} placeholder={spec.baseUrl} p={p} />
+            {spec.urls?.length ? (
+              <ChoiceGroup value={settings.baseUrl} choices={spec.urls.map((u) => u.url)} labels={spec.urls.map((u) => u.label)} tone="secondary" onChange={(baseUrl) => onSettings({ ...settings, baseUrl })} p={p} />
+            ) : (
+              <Input label={t("aiBaseUrl", lang)} value={settings.baseUrl} onChange={(baseUrl) => onSettings({ ...settings, baseUrl })} placeholder={spec.baseUrl} p={p} />
+            )}
           </div>
           <div>
             <Label

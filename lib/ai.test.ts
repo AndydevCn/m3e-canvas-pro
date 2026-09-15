@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { complete, hasKey, isSecureUrl, type AiSettings, type Provider } from "./ai";
+import { applyDraft, complete, hasKey, isSecureUrl, mergeBelow, type AiSettings, type Provider } from "./ai";
+import { Doc } from "./tokens";
 
 const settings = (over: Partial<AiSettings> = {}): AiSettings =>
   ({ provider: "openai", baseUrl: "https://api.example.test", model: "test-model", key: "test-key", ...over });
@@ -76,6 +77,16 @@ describe("complete on the openai-compatible path", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(4096);
   });
 
+  it("posts mimo with bearer auth and no max_tokens (it speaks the newer max_completion_tokens dialect)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(complete(settings({ provider: "mimo", baseUrl: "https://api.xiaomimimo.com/v1" }), "s", "u")).resolves.toBe("ok");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.xiaomimimo.com/v1/chat/completions");
+    expect(init.headers.authorization).toBe("Bearer test-key");
+    expect(JSON.parse(init.body)).not.toHaveProperty("max_tokens");
+  });
+
   it("calls a local endpoint without a key and without an authorization header", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: "local" } }] }));
     vi.stubGlobal("fetch", fetchMock);
@@ -132,5 +143,77 @@ describe("hasKey and isSecureUrl", () => {
     expect(isSecureUrl("http://127.0.0.1:8080/v1")).toBe(true);
     expect(isSecureUrl("http://[::1]:8080/v1")).toBe(true);
     expect(isSecureUrl("http://api.example.test/v1")).toBe(false);
+  });
+});
+
+describe("applyDraft / mergeBelow", () => {
+  const baseDoc = (): Doc => ({
+    groups: [],
+    frames: [{ id: "f1", name: "Home", x: 40, y: 40, w: 412, h: 892 }],
+    paletteKey: "baseline",
+    frame: "phone",
+    title: "Test",
+    brief: "",
+  });
+
+  const frag = (x = 0, y = 0) => ({
+    frames: [{ id: "f2", name: "Next", x, y }],
+    groups: [
+      {
+        id: "g1",
+        x: x + 20,
+        y: y + 30,
+        axis: "x" as const,
+        items: [{ id: "i1", kind: "button", variant: "filled", label: "Hi", icon: null }],
+      },
+    ],
+  });
+
+  it("places an added screen below the existing ones and shifts its groups with it", () => {
+    const out = applyDraft(baseDoc(), { mode: "add", ...frag() });
+    expect(out.frames).toHaveLength(2);
+    expect(out.frames[1]).toMatchObject({ id: "f2", x: 40, y: 40 + 892 + 80 });
+    expect(out.groups[0]).toMatchObject({ id: "g1", x: 60, y: 1042 });
+  });
+
+  it("accepts an add reply that wraps the fragment in doc", () => {
+    const out = applyDraft(baseDoc(), { mode: "add", doc: frag() });
+    expect(out.frames.map((f) => f.id)).toEqual(["f1", "f2"]);
+  });
+
+  it("lands an added screen at 40 40 on an empty canvas", () => {
+    const empty = { ...baseDoc(), frames: [] };
+    const out = applyDraft(empty, { mode: "add", ...frag(100, 200) });
+    expect(out.frames[0]).toMatchObject({ id: "f2", x: 40, y: 40 });
+    expect(out.groups[0]).toMatchObject({ x: 60, y: 70 });
+  });
+
+  it("swaps the whole design for a replace reply", () => {
+    const next = baseDoc();
+    next.frames.push({ id: "f9", name: "Extra", x: 600, y: 40 });
+    expect(applyDraft(baseDoc(), { mode: "replace", doc: next })).toBe(next);
+  });
+
+  it("still accepts a bare document reply (the old shape)", () => {
+    const next = baseDoc();
+    expect(applyDraft(baseDoc(), next)).toBe(next);
+  });
+
+  it("throws json for an add reply without frames", () => {
+    expect(() => applyDraft(baseDoc(), { mode: "add", frames: [], groups: [] })).toThrow("json");
+    expect(() => applyDraft(baseDoc(), { mode: "add", doc: { frames: "no" } })).toThrow("json");
+  });
+
+  it("mergeBelow keeps the model's arrangement as one translated block", () => {
+    const f = mergeBelow(baseDoc(), {
+      frames: [
+        { id: "a", name: "A", x: 0, y: 0 },
+        { id: "b", name: "B", x: 472, y: 0 },
+      ],
+      groups: [],
+    });
+    expect(f.frames.map((x) => x.x)).toEqual([40, 40, 512]);
+    expect(f.frames[1]).toMatchObject({ id: "a", y: 1012 });
+    expect(f.frames[2]).toMatchObject({ id: "b", y: 1012 });
   });
 });

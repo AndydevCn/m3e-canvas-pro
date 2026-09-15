@@ -1,6 +1,6 @@
-import { Doc, Frame, Group, Item, frameOfGroup } from "./tokens";
+import { Doc, Frame, Group, Item, frameOfGroup, frameRect } from "./tokens";
 import { buildPrompt } from "./prompt";
-import { isProject } from "./project";
+import { isProject, isScreenFragment } from "./project";
 import { Lang } from "./i18n";
 
 /* Optional AI helpers. The browser talks to the model provider directly with the
@@ -8,7 +8,7 @@ import { Lang } from "./i18n";
  * prompt and a fixed JSON answer shape, and the result is only applied after the
  * author has looked at it. Coordinates are never touched by the model. */
 
-export type Provider = "claude" | "openai" | "gemini" | "deepseek";
+export type Provider = "claude" | "openai" | "gemini" | "deepseek" | "mimo";
 
 export type AiSettings = {
   provider: Provider;
@@ -17,11 +17,25 @@ export type AiSettings = {
   key: string;
 };
 
-export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: string; keysUrl?: string }[] = [
+export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: string; models?: string[]; urls?: { label: string; url: string }[]; keysUrl?: string }[] = [
   { key: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-luna", keysUrl: "https://platform.openai.com/api-keys" },
   { key: "claude", label: "Claude", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5", keysUrl: "https://console.anthropic.com/settings/keys" },
   { key: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey" },
   { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", keysUrl: "https://platform.deepseek.com/api_keys" },
+  {
+    key: "mimo",
+    label: "Mimo",
+    baseUrl: "https://api.xiaomimimo.com/v1",
+    model: "mimo-v2.5",
+    models: ["mimo-v2.5", "mimo-v2.5-pro"],
+    /* Xiaomi MiMo bills two ways with two separate hosts: the token-plan pool and the
+       pay-as-you-go API. Same protocol, different endpoint — see mimo.mi.com docs. */
+    urls: [
+      { label: "Token Plan", url: "https://token-plan-cn.xiaomimimo.com/v1" },
+      { label: "按量付费", url: "https://api.xiaomimimo.com/v1" },
+    ],
+    keysUrl: "https://mimo.mi.com",
+  },
 ];
 
 export const providerSpec = (k: Provider) => PROVIDERS.find((p) => p.key === k) ?? PROVIDERS[0];
@@ -111,8 +125,9 @@ export async function complete(s: AiSettings, system: string, user: string, sign
     body: JSON.stringify({
       model,
       /* OpenAI's newer models refuse `max_tokens` and default generously, so they get no budget;
-         the other compatible endpoints cap around 8k */
-      ...(s.provider === "openai" ? {} : { max_tokens: Math.min(maxTokens, 8192) }),
+         MiMo likewise speaks the newer dialect (`max_completion_tokens`, defaults 32k-131k), so it
+         gets no budget either; the other compatible endpoints cap around 8k */
+      ...(s.provider === "openai" || s.provider === "mimo" ? {} : { max_tokens: Math.min(maxTokens, 8192) }),
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -236,19 +251,60 @@ export function popHistory<V extends string, H extends string>(current: string |
   return { [valueKey]: prev ?? "", [historyKey]: cur ? [cur] : undefined } as Record<V, string> & Record<H, string[] | undefined>;
 }
 
-/** A whole design from an idea, drafted by the author's own model. `guide` is the same
+/** how far below the lowest existing screen a draft's new screens land */
+const DRAFT_GAP = 80;
+
+/** places a draft's new screens below everything already on the canvas, keeping the
+ *  arrangement the model chose: the whole fragment is translated as one block */
+export function mergeBelow(doc: Doc, frag: { frames: Frame[]; groups: Group[] }): Doc {
+  const rects = doc.frames.map(frameRect);
+  const targetX = rects.length ? Math.min(...rects.map((r) => r.l)) : 40;
+  const targetY = rects.length ? Math.max(...rects.map((r) => r.b)) + DRAFT_GAP : 40;
+  const fresh = frag.frames.map(frameRect);
+  const dx = targetX - Math.min(...fresh.map((r) => r.l));
+  const dy = targetY - Math.min(...fresh.map((r) => r.t));
+  const shiftFrame = (f: Frame): Frame => ({ ...f, x: f.x + dx, y: f.y + dy });
+  const shiftGroup = (g: Group): Group => ({ ...g, x: g.x + dx, y: g.y + dy });
+  return { ...doc, frames: [...doc.frames, ...frag.frames.map(shiftFrame)], groups: [...doc.groups, ...frag.groups.map(shiftGroup)] };
+}
+
+/** applies a draft reply. "add" appends only the new screens below the current ones;
+ *  "replace" swaps the whole design with the edited one (a bare document, the old reply
+ *  shape, still works). Anything else is unreadable. */
+export function applyDraft(current: Doc, reply: Record<string, unknown>): Doc {
+  if (reply.mode === "add") {
+    const frag = (reply.doc ?? reply) as unknown;
+    if (isScreenFragment(frag)) return mergeBelow(current, frag);
+    throw new Error("json");
+  }
+  const doc = (reply.mode === "replace" ? reply.doc : reply) as unknown;
+  if (isProject(doc)) return doc;
+  throw new Error("json");
+}
+
+/** A design change from an idea, drafted by the author's own model. `guide` is the same
  *  agent guide a coding agent reads (public/agent.md), so both paths follow one spec.
- *  The answer is the document itself; a link would be pointless here. */
-export async function draftDesign(s: AiSettings, guide: string, idea: string, lang: Lang, signal?: AbortSignal): Promise<Doc> {
+ *  The idea either asks for a new screen — the reply adds it below the existing ones, which
+ *  stay untouched — or for changes to what is there, and the reply is the whole design with
+ *  only those changes. arrive() keeps the previous design one undo away either way. */
+export async function draftDesign(s: AiSettings, guide: string, idea: string, lang: Lang, current: Doc, signal?: AbortSignal): Promise<Doc> {
   const system = [
-    "You draft M3E Canvas designs. Follow the guide below exactly.",
-    "Reply with the JSON document only: no share link, no prose, no markdown fence, no explanation.",
+    "You edit M3E Canvas designs. The guide below defines the document format.",
+    "After it come the author's current design as JSON (it may be empty) and then the idea.",
     "",
     guide,
+    "",
+    "=== Current design (JSON) ===",
+    JSON.stringify(current),
+    "",
+    "=== How to answer ===",
+    'If the idea asks for a new screen or new screens, reply with {"mode":"add","frames":[…],"groups":[…]}: only the new frames and the groups inside them, laid out left to right from x 40 y 40 with 60 between frames. Do not repeat any current screen. One or two screens; keep it simple.',
+    'If the idea asks to change existing screens or parts, reply with {"mode":"replace","doc":{…}}: the whole design with only the requested changes; keep every other screen, part and id exactly as it is.',
+    "The app places added screens itself, so a frame's x and y do not matter in an add reply.",
+    "Reply with that one JSON object and nothing else: no prose, no markdown fence, no share link, no explanation.",
   ].join("\n");
-  const user = [`Sketch this app: ${idea.trim()}`, `Write every label, title and note in ${LANG_NAME[lang]}.`, "Three to five screens. Keep it simple."].join("\n");
+  const user = [`Idea: ${idea.trim()}`, `Write every label, title and note in ${LANG_NAME[lang]}.`].join("\n");
   const j = parseJsonObject(await complete(s, system, user, signal, 12000));
-  if (!isProject(j)) throw new Error("json");
-  return j;
+  return applyDraft(current, j);
 }
 

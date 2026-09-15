@@ -2289,11 +2289,12 @@ export default function Page() {
         if (!res.ok) throw new Error("guide");
         guideRef.current = await res.text();
       }
-      const next = await draftDesign(aiSettings, guideRef.current, idea, lang);
+      const next = await draftDesign(aiSettings, guideRef.current, idea, lang, docRef.current);
       arrive(next);
     } catch (e) {
-      const m = e instanceof Error ? e.message : "";
-      showToast(m === "json" ? t("aiErrorJson", lang) : m === "refusal" ? t("aiErrorRefusal", lang) : m === "long" ? t("aiErrorLong", lang) : t("aiError", lang), 3200, "error");
+      /* aiErrorText keeps the provider's own reason (status + message) visible, so a
+         rejected request says e.g. "AI 请求失败: 401 Unauthorized: Invalid API Key" */
+      showToast(aiErrorText(e, lang), 4000, "error");
     } finally {
       setDraftBusy(false);
     }
