@@ -4,15 +4,105 @@
 > 在原版「浏览器内绘制 Material 3 Expressive 线框图并生成 vibe-coding 提示词」的基础上，
 > **新增多项目支持与本地持久化（已授权文件夹 / OPFS / localStorage 三级回退）**，
 > 主要面向**产品经理**快速制作原型图、展示用户旅程。
-> 相对原版的功能改动见文末「[相对原版的新增功能](#相对原版的新增功能)」。
->
-> **更新日志**（功能更新，按日期从近到远）：
->
-> **2026-09-15**
->
-> 一、新增第 5 个 AI 服务商 Mimo，支持 mimo-v2.5 与 mimo-v2.5-pro 模型，支持 Token Plan / 按量付费双地址切换
->
-> 二、让AI来画改为意图感知，不再整篇替换画布
+> 相对原版的功能改动见下方「[相对原版的新增功能](#相对原版的新增功能)」。
+
+## 相对原版的新增功能
+
+**更新日志**（功能更新，按日期从近到远）：
+
+**2026-09-15**
+
+一、新增第 5 个 AI 服务商 Mimo，支持 mimo-v2.5 与 mimo-v2.5-pro 模型，支持 Token Plan / 按量付费双地址切换
+
+二、让AI来画改为意图感知，不再整篇替换画布
+
+### 1. 多项目持久化（核心功能）
+
+原版只维护单一画布。现改为浏览器内**多项目管理**，本地存储按优先级回退：
+**已授权的文件系统文件夹（File System Access） > OPFS > localStorage**。
+
+- 每个项目独立存为一个 `.json`，并自动保留 5 份滚动备份（`.bak1~5`）；
+- 项目可新建、打开/切换、重命名、删除；
+- 缩略图（160px webp）随项目保存，用于切换列表预览；
+- 启动时把旧版 localStorage 里的单画布自动迁移为“第一个项目”。
+
+### 2. 多标签页编辑权接管
+
+通过 `BroadcastChannel` 实现多标签页协调：当另一个标签页正持有编辑权时，
+当前页进入**只读**，并显示横幅 + “接管编辑权”按钮，可主动要回编辑权。
+
+### 3. 项目管理界面（应用内对话框）
+
+新增工具栏上的项目切换入口（`ProjectChip`）与下拉菜单（切换 / 新建 / 重命名 / 删除）。
+重命名与删除改用**应用内对话框**（受控输入框 / 确认框），不再依赖浏览器原生弹窗。
+
+### 4. 国际化文案扩展
+
+为上述新 UI 补齐多语言文案（ja / en / zh / ko），新增长尾 key：
+`saveDisk` / `projects` / `newProject` / `switchProject` / `renameProject` /
+`projectName` / `deleteProject` / `deleteProjectAsk` / `deleteProjectBody` /
+`untitled` / `importedDesign` / `copyFailed` / `takeOver` / `takeOverDone` /
+`takeOverForced` 等。项目默认名与“导入的设计”会跟随当前界面语言。
+
+### 5. 项目名跟随界面语言
+
+新建项目的默认名、旧版写入的 “Untitled” / “Imported design” 在启动时按当前语言本地化
+（仅改自动命名，不改动用户手填的名称）。
+
+### 文件改动清单
+
+按发布日期从近到远罗列，每次发布同步更新。
+
+**2026-09-15（Mimo 服务商 + AI 草图意图感知）**
+
+**新增文件**
+
+| 文件                            | 改动说明                                                            |
+| ----------------------------- | --------------------------------------------------------------- |
+| `public/logos/mimo.svg`       | 第 5 个服务商 Mimo 的自绘 "M" 图标（currentColor 遮罩，与现有 logo 机制一致）           |
+
+**修改文件**
+
+| 文件                        | 改动说明                                                                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/ai.ts`               | 新增 Mimo 服务商（OpenAI 兼容协议，`mimo-v2.5` / `mimo-v2.5-pro`，Token Plan / 按量付费双地址预设，`max_completion_tokens` 适配）；`draftDesign` 改为意图感知：新增屏幕走 `mode:"add"`（追加到画布下方），修改现有内容走 `mode:"replace"`；新增 `mergeBelow` / `applyDraft` |
+| `lib/project.ts`          | 新增 `isScreenFragment` 片段校验器（复用 `validFrame` / `validGroup`）                                                                                                                       |
+| `components/AiPanel.tsx`  | 新增 `ChoiceGroup` 连排按钮组组件：Mimo 的"模型 ID"与"基础 URL"改为按钮选择（带左右箭头导航与完整地址 tooltip）                                                                                                       |
+| `app/page.tsx`            | `startDraft` 传入当前文档（支持增量草图）                                                                                                                                                       |
+| `lib/ai.test.ts`          | 新增 Mimo 请求形态测试与 `applyDraft` / `mergeBelow` 单元测试（7 例）                                                                                                                             |
+| `README.md` / `SECURITY.md` | 四语言服务商枚举补 Mimo，更新日志与安全说明同步                                                                                                                                                        |
+
+**此前发布（多项目持久化）**
+
+**新增文件**
+
+| 文件                             | 改动说明                                                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `lib/persist/opfs.ts`          | OPFS 存储实现：`projects/<id>.json` 主文件 + `<id>.json.bak1~5` 节流滚动备份 + `<id>.thumb`（webp dataURL 文本）             |
+| `lib/persist/projects.ts`      | 多项目索引纯函数（脱离浏览器可测）：`withProject` / `withoutProject` / `openedProject` / `renamedProject` / `sortedProjects` |
+| `lib/persist/lock.ts`          | BroadcastChannel 接管协议：`ask-release` / `released`（1.2s 超时）协调多标签页编辑权                                         |
+| `components/ProjectMenu.tsx`   | 项目切换气泡组件：当前项目名 + ▾，下拉列出全部项目（懒加载缩略图）、新建 / 重命名 / 删除 / 切换，只读时提供“接管编辑权”入口                                      |
+| `lib/persist/projects.test.ts` | 多项目索引纯函数的单元测试                                                                                              |
+| `lib/persist/persist.test.ts`  | PersistStore 多项目行为的单元测试                                                                                    |
+
+**修改文件**
+
+| 文件                        | 改动说明                                                                                                                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lib/persist/index.ts`    | 重写 `PersistStore` 支持多项目：`init` / `openProject` / `createProject` / `renameProject` / `deleteProject` / `getThumb` / `setThumbProvider`；存储目标优先级 file > disk(OPFS) > local；新增 `subscribeProjects` 订阅与 `lang` / `setLang` / `translateAutoNames`（默认名本地化）；`init` 时把旧版 localStorage 画布迁移为首个项目；编辑权接管回调 |
+| `lib/persist/types.ts`    | `SaveTarget` 增加 `"disk"`（OPFS）枚举值                                                                                                                                                                                                                                                                |
+| `lib/persist/fsFile.ts`   | `FileAdapter` 增加 `setName` / `name`：每个项目一个 `.json`，重命名时同步改文件名                                                                                                                                                                                                                                    |
+| `app/page.tsx`            | 接入持久化：`subscribeProjects` 订阅刷新 UI；`captureThumb`（toCanvas→160px webp，15s 节流）生成缩略图；`blankDoc` 新建空白画布；响应编辑权接管（只读横幅 + “接管”按钮）；`localStorage` 旧画布迁移；重命名 / 删除改用应用内对话框（`openRename`/`confirmRename`/`openDelete`/`confirmDelete`）；快捷键守卫在对话框打开时不再触发全局快捷键                                                |
+| `components/Toolbar.tsx`  | 接入 `project` 系列 props（`project` / `onCreateProject` / `onSwitchProject` / `onRenameProject` / `onDeleteProject` 等），渲染项目切换 `ProjectChip`                                                                                                                                                          |
+| `components/ui.tsx`       | 新增 `RenameDialog` 组件（受控输入框对话框：Enter 确认、Esc 取消、打开后自动聚焦并全选当前名）                                                                                                                                                                                                                                     |
+| `lib/i18n.ts`             | 新增约 15 个 key × 4 语言，支撑新增 UI 文案                                                                                                                                                                                                                                                                   |
+| `lib/i18n.parity.test.ts` | 4 语言一致性测试（新增 key 已补齐四语言，测试通过）                                                                                                                                                                                                                                                                    |
+
+### 说明
+
+- 本仓库刻意**不含**以下已被处理的纯 bug 修复：`cssRules` 跨域字体 SecurityError、
+  剪贴板写入降级、Toolbar 点击穿透（pointer-events）、原生 `prompt()` / `confirm()`
+  在 iframe 预览中的兼容性——这些属于缺陷修复，不计入功能变更。
 
 <p align="center">
   <img src="app/icon.svg" width="72" alt="" />
@@ -304,97 +394,3 @@ M3E Canvas는 무료이며 MIT 라이선스로 계속 유지됩니다. 시간을
 ### 라이선스
 
 MIT © lnkiai
-
----
-
-## 相对原版的新增功能
-
-> 本仓库基于 [lnkiai/m3e-canvas](https://github.com/lnkiai/m3e-canvas) 修改而成，主要面向**产品经理**快速制作原型图、展示用户旅程。
-
-### 1. 多项目持久化（核心功能）
-
-原版只维护单一画布。现改为浏览器内**多项目管理**，本地存储按优先级回退：
-**已授权的文件系统文件夹（File System Access） > OPFS > localStorage**。
-
-- 每个项目独立存为一个 `.json`，并自动保留 5 份滚动备份（`.bak1~5`）；
-- 项目可新建、打开/切换、重命名、删除；
-- 缩略图（160px webp）随项目保存，用于切换列表预览；
-- 启动时把旧版 localStorage 里的单画布自动迁移为“第一个项目”。
-
-### 2. 多标签页编辑权接管
-
-通过 `BroadcastChannel` 实现多标签页协调：当另一个标签页正持有编辑权时，
-当前页进入**只读**，并显示横幅 + “接管编辑权”按钮，可主动要回编辑权。
-
-### 3. 项目管理界面（应用内对话框）
-
-新增工具栏上的项目切换入口（`ProjectChip`）与下拉菜单（切换 / 新建 / 重命名 / 删除）。
-重命名与删除改用**应用内对话框**（受控输入框 / 确认框），不再依赖浏览器原生弹窗。
-
-### 4. 国际化文案扩展
-
-为上述新 UI 补齐多语言文案（ja / en / zh / ko），新增长尾 key：
-`saveDisk` / `projects` / `newProject` / `switchProject` / `renameProject` /
-`projectName` / `deleteProject` / `deleteProjectAsk` / `deleteProjectBody` /
-`untitled` / `importedDesign` / `copyFailed` / `takeOver` / `takeOverDone` /
-`takeOverForced` 等。项目默认名与“导入的设计”会跟随当前界面语言。
-
-### 5. 项目名跟随界面语言
-
-新建项目的默认名、旧版写入的 “Untitled” / “Imported design” 在启动时按当前语言本地化
-（仅改自动命名，不改动用户手填的名称）。
-
-### 文件改动清单
-
-> 按发布日期从近到远罗列，每次发布同步更新。
-
-**2026-09-15（Mimo 服务商 + AI 草图意图感知）**
-
-**新增文件**
-
-| 文件                            | 改动说明                                                            |
-| ----------------------------- | --------------------------------------------------------------- |
-| `public/logos/mimo.svg`       | 第 5 个服务商 Mimo 的自绘 "M" 图标（currentColor 遮罩，与现有 logo 机制一致）           |
-
-**修改文件**
-
-| 文件                        | 改动说明                                                                                                                                                                              |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/ai.ts`               | 新增 Mimo 服务商（OpenAI 兼容协议，`mimo-v2.5` / `mimo-v2.5-pro`，Token Plan / 按量付费双地址预设，`max_completion_tokens` 适配）；`draftDesign` 改为意图感知：新增屏幕走 `mode:"add"`（追加到画布下方），修改现有内容走 `mode:"replace"`；新增 `mergeBelow` / `applyDraft` |
-| `lib/project.ts`          | 新增 `isScreenFragment` 片段校验器（复用 `validFrame` / `validGroup`）                                                                                                                       |
-| `components/AiPanel.tsx`  | 新增 `ChoiceGroup` 连排按钮组组件：Mimo 的"模型 ID"与"基础 URL"改为按钮选择（带左右箭头导航与完整地址 tooltip）                                                                                                       |
-| `app/page.tsx`            | `startDraft` 传入当前文档（支持增量草图）                                                                                                                                                       |
-| `lib/ai.test.ts`          | 新增 Mimo 请求形态测试与 `applyDraft` / `mergeBelow` 单元测试（7 例）                                                                                                                             |
-| `README.md` / `SECURITY.md` | 四语言服务商枚举补 Mimo，更新日志与安全说明同步                                                                                                                                                        |
-
-**此前发布（多项目持久化）**
-
-**新增文件**
-
-| 文件                             | 改动说明                                                                                                       |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `lib/persist/opfs.ts`          | OPFS 存储实现：`projects/<id>.json` 主文件 + `<id>.json.bak1~5` 节流滚动备份 + `<id>.thumb`（webp dataURL 文本）             |
-| `lib/persist/projects.ts`      | 多项目索引纯函数（脱离浏览器可测）：`withProject` / `withoutProject` / `openedProject` / `renamedProject` / `sortedProjects` |
-| `lib/persist/lock.ts`          | BroadcastChannel 接管协议：`ask-release` / `released`（1.2s 超时）协调多标签页编辑权                                         |
-| `components/ProjectMenu.tsx`   | 项目切换气泡组件：当前项目名 + ▾，下拉列出全部项目（懒加载缩略图）、新建 / 重命名 / 删除 / 切换，只读时提供“接管编辑权”入口                                      |
-| `lib/persist/projects.test.ts` | 多项目索引纯函数的单元测试                                                                                              |
-| `lib/persist/persist.test.ts`  | PersistStore 多项目行为的单元测试                                                                                    |
-
-**修改文件**
-
-| 文件                        | 改动说明                                                                                                                                                                                                                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `lib/persist/index.ts`    | 重写 `PersistStore` 支持多项目：`init` / `openProject` / `createProject` / `renameProject` / `deleteProject` / `getThumb` / `setThumbProvider`；存储目标优先级 file > disk(OPFS) > local；新增 `subscribeProjects` 订阅与 `lang` / `setLang` / `translateAutoNames`（默认名本地化）；`init` 时把旧版 localStorage 画布迁移为首个项目；编辑权接管回调 |
-| `lib/persist/types.ts`    | `SaveTarget` 增加 `"disk"`（OPFS）枚举值                                                                                                                                                                                                                                                                |
-| `lib/persist/fsFile.ts`   | `FileAdapter` 增加 `setName` / `name`：每个项目一个 `.json`，重命名时同步改文件名                                                                                                                                                                                                                                    |
-| `app/page.tsx`            | 接入持久化：`subscribeProjects` 订阅刷新 UI；`captureThumb`（toCanvas→160px webp，15s 节流）生成缩略图；`blankDoc` 新建空白画布；响应编辑权接管（只读横幅 + “接管”按钮）；`localStorage` 旧画布迁移；重命名 / 删除改用应用内对话框（`openRename`/`confirmRename`/`openDelete`/`confirmDelete`）；快捷键守卫在对话框打开时不再触发全局快捷键                                                |
-| `components/Toolbar.tsx`  | 接入 `project` 系列 props（`project` / `onCreateProject` / `onSwitchProject` / `onRenameProject` / `onDeleteProject` 等），渲染项目切换 `ProjectChip`                                                                                                                                                          |
-| `components/ui.tsx`       | 新增 `RenameDialog` 组件（受控输入框对话框：Enter 确认、Esc 取消、打开后自动聚焦并全选当前名）                                                                                                                                                                                                                                     |
-| `lib/i18n.ts`             | 新增约 15 个 key × 4 语言，支撑新增 UI 文案                                                                                                                                                                                                                                                                   |
-| `lib/i18n.parity.test.ts` | 4 语言一致性测试（新增 key 已补齐四语言，测试通过）                                                                                                                                                                                                                                                                    |
-
-### 说明
-
-- 本仓库刻意**不含**以下已被处理的纯 bug 修复：`cssRules` 跨域字体 SecurityError、
-  剪贴板写入降级、Toolbar 点击穿透（pointer-events）、原生 `prompt()` / `confirm()`
-  在 iframe 预览中的兼容性——这些属于缺陷修复，不计入功能变更。
