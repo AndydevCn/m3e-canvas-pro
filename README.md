@@ -346,6 +346,29 @@ MIT © lnkiai
 
 ### 文件改动清单
 
+> 按发布日期从近到远罗列，每次发布同步更新。
+
+**2026-09-15（Mimo 服务商 + AI 草图意图感知）**
+
+**新增文件**
+
+| 文件                            | 改动说明                                                            |
+| ----------------------------- | --------------------------------------------------------------- |
+| `public/logos/mimo.svg`       | 第 5 个服务商 Mimo 的自绘 "M" 图标（currentColor 遮罩，与现有 logo 机制一致）           |
+
+**修改文件**
+
+| 文件                        | 改动说明                                                                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/ai.ts`               | 新增 Mimo 服务商（OpenAI 兼容协议，`mimo-v2.5` / `mimo-v2.5-pro`，Token Plan / 按量付费双地址预设，`max_completion_tokens` 适配）；`draftDesign` 改为意图感知：新增屏幕走 `mode:"add"`（追加到画布下方），修改现有内容走 `mode:"replace"`；新增 `mergeBelow` / `applyDraft` |
+| `lib/project.ts`          | 新增 `isScreenFragment` 片段校验器（复用 `validFrame` / `validGroup`）                                                                                                                       |
+| `components/AiPanel.tsx`  | 新增 `ChoiceGroup` 连排按钮组组件：Mimo 的"模型 ID"与"基础 URL"改为按钮选择（带左右箭头导航与完整地址 tooltip）                                                                                                       |
+| `app/page.tsx`            | `startDraft` 传入当前文档（支持增量草图）                                                                                                                                                       |
+| `lib/ai.test.ts`          | 新增 Mimo 请求形态测试与 `applyDraft` / `mergeBelow` 单元测试（7 例）                                                                                                                             |
+| `README.md` / `SECURITY.md` | 四语言服务商枚举补 Mimo，更新日志与安全说明同步                                                                                                                                                        |
+
+**此前发布（多项目持久化）**
+
 **新增文件**
 
 | 文件                             | 改动说明                                                                                                       |
