@@ -268,13 +268,38 @@ export function mergeBelow(doc: Doc, frag: { frames: Frame[]; groups: Group[] })
   return { ...doc, frames: [...doc.frames, ...frag.frames.map(shiftFrame)], groups: [...doc.groups, ...frag.groups.map(shiftGroup)] };
 }
 
+/** swaps the model's edited screens into the design by id: each edited frame keeps its
+ *  place on the canvas and the groups sitting on it are replaced wholesale; every other
+ *  frame, group and id is untouched, so a partial request can never redraw the rest */
+export function editInPlace(doc: Doc, frag: { frames: Frame[]; groups: Group[] }): Doc {
+  const edited = new Map(frag.frames.map((f) => [f.id, f]));
+  const unknown = [...edited.keys()].filter((id) => !doc.frames.some((f) => f.id === id));
+  if (unknown.length) throw new Error("json");
+  const frames = doc.frames.map((f) => {
+    const next = edited.get(f.id);
+    return next ? { ...next, x: f.x, y: f.y } : f;
+  });
+  const onEditedScreen = (g: Group) =>
+    doc.frames.some((f) => {
+      if (!edited.has(f.id)) return false;
+      const r = frameRect(f);
+      return g.x >= r.l && g.x <= r.r && g.y >= r.t && g.y <= r.b;
+    });
+  return { ...doc, frames, groups: [...doc.groups.filter((g) => !onEditedScreen(g)), ...frag.groups] };
+}
+
 /** applies a draft reply. "add" appends only the new screens below the current ones;
+ *  "edit" swaps the named screens in by id, leaving the rest of the design untouched;
  *  "replace" swaps the whole design with the edited one (a bare document, the old reply
  *  shape, still works). Anything else is unreadable. */
 export function applyDraft(current: Doc, reply: Record<string, unknown>): Doc {
   if (reply.mode === "add") {
     const frag = (reply.doc ?? reply) as unknown;
     if (isScreenFragment(frag)) return mergeBelow(current, frag);
+    throw new Error("json");
+  }
+  if (reply.mode === "edit") {
+    if (isScreenFragment(reply)) return editInPlace(current, reply);
     throw new Error("json");
   }
   const doc = (reply.mode === "replace" ? reply.doc : reply) as unknown;
@@ -285,8 +310,9 @@ export function applyDraft(current: Doc, reply: Record<string, unknown>): Doc {
 /** A design change from an idea, drafted by the author's own model. `guide` is the same
  *  agent guide a coding agent reads (public/agent.md), so both paths follow one spec.
  *  The idea either asks for a new screen — the reply adds it below the existing ones, which
- *  stay untouched — or for changes to what is there, and the reply is the whole design with
- *  only those changes. arrive() keeps the previous design one undo away either way. */
+ *  stay untouched — or for changes to a few screens, and the reply names just those screens
+ *  so the app swaps them in by id, or for design-wide changes, and the reply is the whole
+ *  design. arrive() keeps the previous design one undo away either way. */
 export async function draftDesign(s: AiSettings, guide: string, idea: string, lang: Lang, current: Doc, signal?: AbortSignal): Promise<Doc> {
   const system = [
     "You edit M3E Canvas designs. The guide below defines the document format.",
@@ -299,8 +325,9 @@ export async function draftDesign(s: AiSettings, guide: string, idea: string, la
     "",
     "=== How to answer ===",
     'If the idea asks for a new screen or new screens, reply with {"mode":"add","frames":[…],"groups":[…]}: only the new frames and the groups inside them, laid out left to right from x 40 y 40 with 60 between frames. Do not repeat any current screen. One or two screens; keep it simple.',
-    'If the idea asks to change existing screens or parts, reply with {"mode":"replace","doc":{…}}: the whole design with only the requested changes; keep every other screen, part and id exactly as it is.',
-    "The app places added screens itself, so a frame's x and y do not matter in an add reply.",
+    'If the idea asks to change one or a few existing screens or the parts on them, reply with {"mode":"edit","frames":[…],"groups":[…]}: only the edited frames and every group that sits on them. Reuse the edited frames\' existing ids and the groups\' existing ids; include the groups you keep as they are and leave out the ones the idea removes. The app swaps these in by id and keeps every screen you do not return exactly as it is, so never re-output other screens.',
+    'Only if the idea changes what a screen edit cannot express — theme, title, brief, removing whole screens, or reworking nearly the whole design — reply with {"mode":"replace","doc":{…}}: the whole design with only the requested changes; keep every other screen, part and id exactly as it is.',
+    "The app places added screens itself and keeps edited screens where they are, so a frame's x and y do not matter in an add or edit reply.",
     "Reply with that one JSON object and nothing else: no prose, no markdown fence, no share link, no explanation.",
   ].join("\n");
   const user = [`Idea: ${idea.trim()}`, `Write every label, title and note in ${LANG_NAME[lang]}.`].join("\n");

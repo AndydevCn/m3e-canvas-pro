@@ -199,6 +199,45 @@ describe("applyDraft / mergeBelow", () => {
     expect(applyDraft(baseDoc(), next)).toBe(next);
   });
 
+  it("edits swap only the named screens in by id and keep their place", () => {
+    const doc = baseDoc();
+    doc.frames.push({ id: "f2", name: "Stats", x: 500, y: 40, w: 412, h: 892 });
+    doc.groups.push(
+      { id: "g1", x: 60, y: 70, axis: "x", items: [{ id: "i1", kind: "button", variant: "filled", label: "Old", icon: null }] },
+      { id: "g2", x: 520, y: 70, axis: "x", items: [{ id: "i2", kind: "button", variant: "filled", label: "Keep", icon: null }] },
+    );
+    const out = applyDraft(doc, {
+      mode: "edit",
+      frames: [{ id: "f1", name: "Home v2", x: 9999, y: 9999 }],
+      groups: [{ id: "g1", x: 60, y: 70, axis: "x", items: [{ id: "i1", kind: "button", variant: "filled", label: "New", icon: null }] }],
+    });
+    expect(out.frames.map((f) => f.id)).toEqual(["f1", "f2"]);
+    expect(out.frames[0]).toMatchObject({ id: "f1", name: "Home v2", x: 40, y: 40 });
+    expect(out.frames[1]).toMatchObject({ id: "f2", name: "Stats", x: 500, y: 40 });
+    expect(out.groups.map((g) => g.id)).toEqual(["g2", "g1"]);
+    expect(out.groups.find((g) => g.id === "g1")!.items[0]).toMatchObject({ label: "New" });
+    expect(out.groups.find((g) => g.id === "g2")!.items[0]).toMatchObject({ label: "Keep" });
+  });
+
+  it("an edit reply that omits a group of the edited screen removes it", () => {
+    const doc = baseDoc();
+    doc.frames.push({ id: "f2", name: "Stats", x: 500, y: 40, w: 412, h: 892 });
+    doc.groups.push(
+      { id: "g1", x: 60, y: 70, axis: "x", items: [{ id: "i1", kind: "button", variant: "filled", label: "Old", icon: null }] },
+      { id: "g2", x: 520, y: 70, axis: "x", items: [{ id: "i2", kind: "button", variant: "filled", label: "Keep", icon: null }] },
+    );
+    const out = applyDraft(doc, { mode: "edit", frames: [{ id: "f1", name: "Home", x: 40, y: 40 }], groups: [] });
+    expect(out.groups.map((g) => g.id)).toEqual(["g2"]);
+  });
+
+  it("throws json when an edit reply names a screen the design does not have", () => {
+    expect(() => applyDraft(baseDoc(), { mode: "edit", frames: [{ id: "nope", name: "X", x: 0, y: 0 }], groups: [] })).toThrow("json");
+  });
+
+  it("throws json for an edit reply without valid frames", () => {
+    expect(() => applyDraft(baseDoc(), { mode: "edit", frames: [], groups: [] })).toThrow("json");
+  });
+
   it("throws json for an add reply without frames", () => {
     expect(() => applyDraft(baseDoc(), { mode: "add", frames: [], groups: [] })).toThrow("json");
     expect(() => applyDraft(baseDoc(), { mode: "add", doc: { frames: "no" } })).toThrow("json");
