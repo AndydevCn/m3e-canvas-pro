@@ -8,11 +8,11 @@
 
 ## Star History
 
-<a href="https://star-history.dera.page/barry-ran/QtScrcpy?compare=AndydevCn/m3e-canvas-pro&legend=bottom-right">
+<a href="https://www.star-history.com/?repos=andydevcn%2Fm3e-canvas-pro&type=timeline&legend=bottom-right">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=barry-ran/QtScrcpy,AndydevCn/m3e-canvas-pro&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=barry-ran/QtScrcpy,AndydevCn/m3e-canvas-pro&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=barry-ran/QtScrcpy,AndydevCn/m3e-canvas-pro&legend=bottom-right" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=andydevcn/m3e-canvas-pro&type=timeline&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=andydevcn/m3e-canvas-pro&type=timeline&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=andydevcn/m3e-canvas-pro&type=timeline&legend=bottom-right" />
  </picture>
 </a>
 
