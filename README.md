@@ -6,6 +6,16 @@
 > 主要面向**产品经理**快速制作原型图、展示用户旅程。
 > 相对原版的功能改动见下方「[相对原版的新增功能](#相对原版的新增功能)」。
 
+## Star History
+
+<a href="https://star-history.dera.page/barry-ran/QtScrcpy?compare=AndydevCn/m3e-canvas-pro&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=barry-ran/QtScrcpy,AndydevCn/m3e-canvas-pro&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=barry-ran/QtScrcpy,AndydevCn/m3e-canvas-pro&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=barry-ran/QtScrcpy,AndydevCn/m3e-canvas-pro&legend=bottom-right" />
+ </picture>
+</a>
+
 ## 相对原版的新增功能
 
 **更新日志**（功能更新，按日期从近到远）：
