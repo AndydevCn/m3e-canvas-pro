@@ -26,8 +26,8 @@ export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: 
     key: "mimo",
     label: "Mimo",
     baseUrl: "https://api.xiaomimimo.com/v1",
-    model: "mimo-v2.5",
-    models: ["mimo-v2.5", "mimo-v2.5-pro"],
+    model: "mimo-v2.6",
+    models: ["mimo-v2.6", "mimo-v2.6-pro"],
     /* Xiaomi MiMo bills two ways with two separate hosts: the token-plan pool and the
        pay-as-you-go API. Same protocol, different endpoint — see mimo.mi.com docs. */
     urls: [
