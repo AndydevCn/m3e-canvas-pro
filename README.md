@@ -21,6 +21,12 @@
 
 **更新日志**（功能更新，按日期从近到远）：
 
+**2026-09-24**
+
+一、合并上游 26 个提交：新增轮播 Carousel、时间/日期选择器、FAB 菜单、Split button、Bottom sheet 等部件，进度条支持条形/环形/波浪四种形态与图片填充
+
+二、面板体系升级：全部件换新面板，屏幕改为标签式面板，提示词支持全屏编辑，新增启动骨架屏与 PWA 安装支持
+
 **2026-09-23**
 
 一、支持小米 MiMo 最新 mimo-v2.6 系列模型（mimo-v2.6-flash / mimo-v2.6-pro），替换原有 v2.5 模型
@@ -50,6 +56,21 @@
 ### 文件改动清单
 
 按发布日期从近到远罗列，每次发布同步更新。
+
+**2026-09-24（合并上游：部件扩展 + 面板重建）**
+
+**修改文件**（上游 26 个提交涉及约 40 个文件，此处列出 fork 侧融合要点）
+
+| 文件                            | 改动说明                                                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `app/Editor.tsx`              | 上游新建的编辑器主体（自 page.tsx 迁出）；fork 的持久化 / AI 草图 / 项目管理增量经三方合并移植至此                                            |
+| `app/page.tsx`                | 改为上游的薄壳加载器（骨架屏 + 动态加载 Editor），修复首屏语言闪烁                                                                          |
+| `app/layout.tsx`              | 保留 fork 自托管字体链接，叠加上游首屏骨架屏预绘脚本                                                                                   |
+| `components/FramePanel.tsx`   | 上游新增的屏幕标签面板；移植 fork 的剪贴板降级 `copyText`                                                                           |
+| `components/PromptPanel.tsx`  | 上游全屏提示词编辑器；保留 fork 的 `copyText`                                                                                 |
+| `components/Inspector.tsx`    | 取上游瘦身版（内容迁往 PartPanel/FramePanel）                                                                               |
+| `components/ui.tsx` / `lib/i18n.ts` / `lib/tokens.ts` 等 | 上游自动合并（ui +142 / i18n 新增 key / tokens 新部件类型）                                                    |
+| `app/manifest.webmanifest` 等  | 上游新增：PWA 安装元数据、图标、Skeleton / CardStage / Pickers / TapStage 等新组件                                                 |
 
 **2026-09-23（MiMo 模型升级 v2.6 系列）**
 
