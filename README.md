@@ -27,7 +27,7 @@
 
 二、面板体系升级：全部件换新面板，屏幕改为标签式面板，提示词支持全屏编辑，新增启动骨架屏与 PWA 安装支持
 
-三、AI 输出预算按服务商适配：Gemini 65536 / Claude 32768，DeepSeek 思考模式（默认开启）与 OpenAI、MiMo 不发送 max_tokens 沿用官方模式化默认，端点拒绝预算时自动回退 8192 重试
+三、AI 输出预算按服务商适配：Gemini 65536 / Claude 32768 / DeepSeek 16384（显式关闭其默认开启的思考模式，结构化草稿更快更省），端点拒绝预算或 thinking 参数时自动回退重试
 
 **2026-09-23**
 
@@ -73,7 +73,7 @@
 | `components/Inspector.tsx`    | 取上游瘦身版（内容迁往 PartPanel/FramePanel）                                                                               |
 | `components/ui.tsx` / `lib/i18n.ts` / `lib/tokens.ts` 等 | 上游自动合并（ui +142 / i18n 新增 key / tokens 新部件类型）                                                    |
 | `app/manifest.webmanifest` 等  | 上游新增：PWA 安装元数据、图标、Skeleton / CardStage / Pickers / TapStage 等新组件                                                 |
-| `lib/ai.ts`                   | 输出预算按服务商 `maxOut` 区分；DeepSeek 默认思考模式，不发送 max_tokens（64K/8K 随模式自适应）；400 报 max_tokens 超限时自动回退 8192 重试一次；让AI来画失败写控制台、提示延长至 10 秒 |
+| `lib/ai.ts`                   | 输出预算按服务商 `maxOut` 区分；DeepSeek 显式关闭思考模式（thinking: disabled）+ 16384 预算，thinking 参数被旧端点拒绝时自动回退；400 报 max_tokens 超限时回退 8192 重试一次；让AI来画失败写控制台、提示延长至 10 秒 |
 | `lib/ai.test.ts`              | 新增 gemini 长预算回退测试（31 例）                                                                                   |
 
 **2026-09-23（MiMo 模型升级 v2.6 系列）**

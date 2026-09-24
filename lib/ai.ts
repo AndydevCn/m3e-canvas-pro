@@ -18,15 +18,15 @@ export type AiSettings = {
 };
 
 /** the largest `max_tokens` a provider accepts, per its API docs; undefined means the
- *  provider is never sent a budget at all and uses its own mode-aware default — DeepSeek
- *  runs thinking mode by default (64K budget there, 8K without), MiMo defaults 131072
- *  including reasoning tokens. A request that still blames max_tokens on a 400 falls back
- *  to the conservative 8192 (complete). */
+ *  provider is never sent a budget at all and uses its own generous default — MiMo
+ *  defaults 131072 including reasoning tokens. DeepSeek runs thinking mode by default,
+ *  so complete() turns it off and budgets 16384 for the JSON drafts. A request that still
+ *  blames max_tokens on a 400 falls back to the conservative 8192 (complete). */
 export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: string; models?: string[]; urls?: { label: string; url: string }[]; keysUrl?: string; maxOut?: number }[] = [
   { key: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-luna", keysUrl: "https://platform.openai.com/api-keys" },
   { key: "claude", label: "Claude", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5", keysUrl: "https://console.anthropic.com/settings/keys", maxOut: 32768 },
   { key: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey", maxOut: 65536 },
-  { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", keysUrl: "https://platform.deepseek.com/api_keys" },
+  { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", keysUrl: "https://platform.deepseek.com/api_keys", maxOut: 16384 },
   {
     key: "mimo",
     label: "Mimo",
@@ -102,9 +102,10 @@ export async function complete(s: AiSettings, system: string, user: string, sign
   const model = s.model.trim();
   if (!model) throw new Error("model");
   if (!isSecureUrl(base)) throw new Error("insecure");
-  /* providers without a documented flat cap (openai, mimo, deepseek) are never sent
-     max_tokens: DeepSeek runs thinking mode by default, where its own budget adapts
-     (64K thinking / 8K non-thinking) and a fixed small cap cuts the reasoning short */
+  /* providers without a documented flat cap (openai, mimo) are never sent max_tokens and
+     use their own generous default; deepseek runs thinking mode by default, so the app
+     disables it (structured JSON drafts need no chain of thought) and sends an explicit
+     budget — without it the non-thinking default is a tight 8K */
   const cap = providerSpec(s.provider).maxOut;
   const budget = cap ? Math.min(maxTokens, cap) : undefined;
   const blameBudget = (detail: string) => budget !== undefined && budget > 8192 && /max.?_?tokens?|budget|too large/i.test(detail);
@@ -138,7 +139,10 @@ export async function complete(s: AiSettings, system: string, user: string, sign
   }
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (s.key.trim()) headers.authorization = `Bearer ${s.key.trim()}`;
-  const send = (b: number | undefined) =>
+  /* deepseek: thinking off for speed and cost; an endpoint older than the thinking
+     parameter gets one retry without it */
+  const noThinking = s.provider === "deepseek";
+  const send = (b: number | undefined, thinking: boolean) =>
     fetch(`${base}/chat/completions`, {
       method: "POST",
       signal,
@@ -146,16 +150,18 @@ export async function complete(s: AiSettings, system: string, user: string, sign
       body: JSON.stringify({
         model,
         ...(b ? { max_tokens: b } : {}),
+        ...(thinking ? { thinking: { type: "disabled" } } : {}),
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
       }),
     });
-  let res = await send(budget);
-  if (res.status === 400 && budget) {
+  let res = await send(budget, noThinking);
+  if (res.status === 400) {
     const detail = await readError(res);
-    if (blameBudget(detail)) res = await send(8192);
+    if (noThinking && /thinking|reasoning/i.test(detail)) res = await send(budget, false);
+    else if (blameBudget(detail)) res = await send(8192, noThinking);
     else throw new Error(detail);
   }
   if (!res.ok) throw new Error(await readError(res));
