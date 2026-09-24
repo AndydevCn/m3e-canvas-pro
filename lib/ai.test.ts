@@ -70,11 +70,18 @@ describe("complete on the openai-compatible path", () => {
     expect(body).not.toHaveProperty("max_tokens");
   });
 
-  it.each(["gemini", "deepseek"] as Provider[])("sends a max_tokens budget to %s", async (provider) => {
+  it("sends a max_tokens budget to gemini (it has a documented flat cap)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(complete(settings({ provider }), "s", "u")).resolves.toBe("ok");
+    await expect(complete(settings({ provider: "gemini" }), "s", "u")).resolves.toBe("ok");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(4096);
+  });
+
+  it("omits max_tokens for deepseek (thinking mode is its default, and its budget adapts to the mode)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(complete(settings({ provider: "deepseek" }), "s", "u", undefined, 12000)).resolves.toBe("ok");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty("max_tokens");
   });
 
   it("raises the gemini budget for a long draft and falls back to 8192 when the endpoint refuses it", async () => {
