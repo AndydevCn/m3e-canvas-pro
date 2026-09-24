@@ -2748,8 +2748,11 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       arrive(next);
     } catch (e) {
       /* aiErrorText keeps the provider's own reason (status + message) visible, so a
-         rejected request says e.g. "AI 请求失败: 401 Unauthorized: Invalid API Key" */
-      showToast(aiErrorText(e, lang), 4000, "error");
+         rejected request says e.g. "AI 请求失败: 401 Unauthorized: Invalid API Key".
+         The console keeps the full error for diagnosis; the toast stays 10s because a
+         failed draft usually ends a long wait and the author may have looked away. */
+      console.error("[让AI来画] draft failed:", e);
+      showToast(aiErrorText(e, lang), 10000, "error");
     } finally {
       setDraftBusy(false);
     }
