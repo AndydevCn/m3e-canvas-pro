@@ -77,6 +77,17 @@ describe("complete on the openai-compatible path", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(4096);
   });
 
+  it("raises the gemini budget for a long draft and falls back to 8192 when the endpoint refuses it", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "max_tokens is too large: 12000. This model supports at most 8192." } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(complete(settings({ provider: "gemini" }), "s", "u", undefined, 12000)).resolves.toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(12000);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_tokens).toBe(8192);
+  });
+
   it("posts mimo with bearer auth and no max_tokens (it speaks the newer max_completion_tokens dialect)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
     vi.stubGlobal("fetch", fetchMock);

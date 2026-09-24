@@ -27,6 +27,8 @@
 
 二、面板体系升级：全部件换新面板，屏幕改为标签式面板，提示词支持全屏编辑，新增启动骨架屏与 PWA 安装支持
 
+三、AI 输出预算按服务商区分（Gemini 65536 / Claude 32768 / DeepSeek 8192 / OpenAI 与 MiMo 走官方默认），端点拒绝预算时自动回退 8192 重试
+
 **2026-09-23**
 
 一、支持小米 MiMo 最新 mimo-v2.6 系列模型（mimo-v2.6-flash / mimo-v2.6-pro），替换原有 v2.5 模型
@@ -71,6 +73,8 @@
 | `components/Inspector.tsx`    | 取上游瘦身版（内容迁往 PartPanel/FramePanel）                                                                               |
 | `components/ui.tsx` / `lib/i18n.ts` / `lib/tokens.ts` 等 | 上游自动合并（ui +142 / i18n 新增 key / tokens 新部件类型）                                                    |
 | `app/manifest.webmanifest` 等  | 上游新增：PWA 安装元数据、图标、Skeleton / CardStage / Pickers / TapStage 等新组件                                                 |
+| `lib/ai.ts`                   | 输出预算按服务商 `maxOut` 区分；端点 400 报 max_tokens 超限时自动回退 8192 重试一次；让AI来画失败写控制台、提示延长至 10 秒                      |
+| `lib/ai.test.ts`              | 新增 gemini 长预算回退测试（31 例）                                                                                   |
 
 **2026-09-23（MiMo 模型升级 v2.6 系列）**
 

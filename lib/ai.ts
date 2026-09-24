@@ -17,11 +17,14 @@ export type AiSettings = {
   key: string;
 };
 
-export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: string; models?: string[]; urls?: { label: string; url: string }[]; keysUrl?: string }[] = [
+/** the largest `max_tokens` a provider accepts, per its API docs; undefined means the
+ *  provider is never sent a budget at all and uses its own generous default. A request
+ *  that still blames max_tokens on a 400 falls back to the conservative 8192 (complete). */
+export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: string; models?: string[]; urls?: { label: string; url: string }[]; keysUrl?: string; maxOut?: number }[] = [
   { key: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-luna", keysUrl: "https://platform.openai.com/api-keys" },
-  { key: "claude", label: "Claude", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5", keysUrl: "https://console.anthropic.com/settings/keys" },
-  { key: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey" },
-  { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", keysUrl: "https://platform.deepseek.com/api_keys" },
+  { key: "claude", label: "Claude", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5", keysUrl: "https://console.anthropic.com/settings/keys", maxOut: 32768 },
+  { key: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey", maxOut: 65536 },
+  { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", keysUrl: "https://platform.deepseek.com/api_keys", maxOut: 8192 },
   {
     key: "mimo",
     label: "Mimo",
@@ -89,24 +92,38 @@ async function readError(res: Response): Promise<string> {
   return `${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
 }
 
-/** one round trip: a system prompt and a user message in, the model's text out */
+/** one round trip: a system prompt and a user message in, the model's text out. The
+ *  output budget follows each provider's documented maximum; a provider that rejects the
+ *  budget with a 400 about max_tokens gets one retry at the conservative 8192. */
 export async function complete(s: AiSettings, system: string, user: string, signal?: AbortSignal, maxTokens = 4096): Promise<string> {
   const base = trimSlash(s.baseUrl);
   const model = s.model.trim();
   if (!model) throw new Error("model");
   if (!isSecureUrl(base)) throw new Error("insecure");
+  /* OpenAI's newer models refuse `max_tokens` and default generously, so they get no budget;
+     MiMo likewise speaks the newer dialect (max_completion_tokens, official default 131072
+     including reasoning tokens), so it gets no budget either */
+  const budget = Math.min(maxTokens, providerSpec(s.provider).maxOut ?? 8192);
+  const blameBudget = (detail: string) => budget > 8192 && /max.?_?tokens?|budget|too large/i.test(detail);
   if (s.provider === "claude") {
-    const res = await fetch(`${base}/v1/messages`, {
-      method: "POST",
-      signal,
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": s.key.trim(),
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({ model, max_tokens: Math.min(maxTokens, 8192), system, messages: [{ role: "user", content: user }] }),
-    });
+    const send = (b: number) =>
+      fetch(`${base}/v1/messages`, {
+        method: "POST",
+        signal,
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": s.key.trim(),
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({ model, max_tokens: b, system, messages: [{ role: "user", content: user }] }),
+      });
+    let res = await send(budget);
+    if (res.status === 400) {
+      const detail = await readError(res);
+      if (blameBudget(detail)) res = await send(8192);
+      else throw new Error(detail);
+    }
     if (!res.ok) throw new Error(await readError(res));
     const j = await res.json();
     if (j.stop_reason === "refusal") throw new Error("refusal");
@@ -118,22 +135,27 @@ export async function complete(s: AiSettings, system: string, user: string, sign
   }
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (s.key.trim()) headers.authorization = `Bearer ${s.key.trim()}`;
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    signal,
-    headers,
-    body: JSON.stringify({
-      model,
-      /* OpenAI's newer models refuse `max_tokens` and default generously, so they get no budget;
-         MiMo likewise speaks the newer dialect (`max_completion_tokens`, defaults 32k-131k), so it
-         gets no budget either; the other compatible endpoints cap around 8k */
-      ...(s.provider === "openai" || s.provider === "mimo" ? {} : { max_tokens: Math.min(maxTokens, 8192) }),
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
-  });
+  const send = (b: number | undefined) =>
+    fetch(`${base}/chat/completions`, {
+      method: "POST",
+      signal,
+      headers,
+      body: JSON.stringify({
+        model,
+        ...(b ? { max_tokens: b } : {}),
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }),
+    });
+  const budgeted = s.provider === "openai" || s.provider === "mimo" ? undefined : budget;
+  let res = await send(budgeted);
+  if (res.status === 400 && budgeted) {
+    const detail = await readError(res);
+    if (blameBudget(detail)) res = await send(8192);
+    else throw new Error(detail);
+  }
   if (!res.ok) throw new Error(await readError(res));
   const j = await res.json();
   if (j.choices?.[0]?.finish_reason === "length") throw new Error("long");
